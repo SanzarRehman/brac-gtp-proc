@@ -1,0 +1,10 @@
+# requirements.txt for BanglaChatbot
+fastapi
+uvicorn
+langchain
+langchain-community
+langchain-ollama
+qdrant-client
+PyPDF2
+pydantic
+sentence_transformers

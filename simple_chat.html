@@ -1,0 +1,860 @@
+<!-- simple_chat.html: ChatGPT-like interface for BanglaChatbot -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>BRACGPT - Procurement Assistant</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        :root {
+            --primary-color: #EC008C; /* BRAC pink color */
+            --primary-dark: #c4007a;
+            --primary-light: #ff30a8;
+            --text-light: #ffffff;
+            --text-dark: #333333;
+            --bg-light: #f7f7f7;
+            --bg-dark: #202123;
+        }
+        
+        body {
+            background-color: var(--bg-light);
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        
+        header {
+            background-color: var(--bg-dark);
+            color: var(--text-light);
+            padding: 14px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .logo img {
+            height: 30px;
+        }
+        
+        .logo-text {
+            font-size: 20px;
+            font-weight: bold;
+        }
+        
+        .document-list-button {
+            background-color: var(--primary-color);
+            color: var(--text-light);
+            border: none;
+            border-radius: 4px;
+            padding: 8px 12px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        
+        .document-list-button:hover {
+            background-color: var(--primary-dark);
+        }
+        
+        main {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            height: calc(100vh - 60px);
+            overflow: hidden;
+        }
+        
+        .chat-container {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            background-color: #ffffff;
+            overflow-y: auto;
+            padding-bottom: 120px; /* Space for input area */
+        }
+        
+        .message {
+            padding: 20px;
+            margin: 0;
+            display: flex;
+            line-height: 1.5;
+            align-items: flex-start; /* Align items to the top */
+        }
+        
+        .user-message {
+            background-color: var(--bg-light);
+        }
+        
+        .bot-message {
+            background-color: #ffffff;
+        }
+        
+        .message-content {
+            max-width: 800px;
+            margin: 0 auto;
+            width: 100%;
+            padding-left: 15px; /* Add padding for better spacing from avatar */
+        }
+        
+        .avatar {
+            width: 30px;
+            height: 30px;
+            border-radius: 3px;
+            margin-right: 0; /* Remove right margin */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            flex-shrink: 0; /* Prevent avatar from shrinking */
+            position: relative; /* Allow for absolute positioning of content */
+            top: 0; /* Align to top */
+        }
+        
+        .user-avatar {
+            background-color: var(--primary-color);
+            color: var(--text-light);
+        }
+        
+        .bot-avatar {
+            background-color: var(--primary-color);
+            color: var(--text-light);
+        }
+        
+        .thinking {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            margin-top: 5px;
+            color: #666;
+            font-style: italic;
+        }
+        
+        .dot {
+            width: 8px;
+            height: 8px;
+            background-color: var(--primary-color);
+            border-radius: 50%;
+            opacity: 0.6;
+            animation: pulse 1.5s infinite;
+        }
+        
+        .dot:nth-child(2) { animation-delay: 0.2s; }
+        .dot:nth-child(3) { animation-delay: 0.4s; }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 0.6; transform: scale(1); }
+            50% { opacity: 1; transform: scale(1.2); }
+        }
+        
+        .input-area {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background-color: #ffffff;
+            padding: 20px 0;
+            display: flex;
+            justify-content: center;
+            border-top: 1px solid #e5e5e5;
+        }
+        
+        .input-container {
+            position: relative;
+            max-width: 800px;
+            width: 100%;
+            margin: 0 20px;
+        }
+        
+        #input {
+            width: 100%;
+            padding: 15px;
+            padding-right: 100px;
+            border-radius: 8px;
+            border: 1px solid #e5e5e5;
+            outline: none;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+            font-size: 16px;
+            resize: none;
+            height: 56px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        #input:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 2px rgba(236, 0, 140, 0.2);
+        }
+        
+        .input-buttons {
+            position: absolute;
+            right: 12px;
+            bottom: 12px;
+            display: flex;
+            gap: 8px;
+        }
+        
+        #upload-btn {
+            background: none;
+            border: none;
+            color: var(--primary-color);
+            cursor: pointer;
+            font-size: 20px;
+            padding: 5px;
+        }
+        
+        #send {
+            background-color: var(--primary-color);
+            color: var(--text-light);
+            border: none;
+            border-radius: 4px;
+            padding: 6px 12px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        
+        #send:hover {
+            background-color: var(--primary-dark);
+        }
+        
+        #send:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        
+        /* Document list modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .modal-content {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            width: 80%;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            border-bottom: 2px solid var(--primary-color);
+            padding-bottom: 10px;
+        }
+        
+        .close {
+            font-size: 24px;
+            cursor: pointer;
+            color: var(--primary-color);
+        }
+        
+        .document-list {
+            list-style: none;
+            margin-top: 15px;
+        }
+        
+        .document-list li {
+            padding: 10px;
+            border-radius: 4px;
+            background-color: #f5f5f5;
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-left: 3px solid var(--primary-color);
+        }
+        
+        /* File upload styling */
+        #file-upload {
+            display: none;
+        }
+        
+        .upload-form {
+            margin-top: 20px;
+            border-top: 1px solid #eee;
+            padding-top: 20px;
+        }
+        
+        .upload-btn {
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 8px 16px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        
+        .upload-btn:hover {
+            background-color: var(--primary-dark);
+        }
+        
+        .upload-status {
+            margin-top: 10px;
+            padding: 8px;
+            border-radius: 4px;
+        }
+        
+        .success { background-color: #d4edda; color: #155724; }
+        .error { background-color: #f8d7da; color: #721c24; }
+        .loading { background-color: #e2f3f9; color: #0c5460; }
+        
+        /* Markdown-style formatting */
+        .bot-content h1, .bot-content h2, .bot-content h3 {
+            margin: 16px 0 8px 0;
+            color: var(--primary-color);
+        }
+        
+        .bot-content p {
+            margin-bottom: 12px;
+        }
+        
+        .bot-content ul, .bot-content ol {
+            margin-left: 20px;
+            margin-bottom: 12px;
+        }
+        
+        .bot-content table {
+            border-collapse: collapse;
+            margin: 15px 0;
+            width: 100%;
+        }
+        
+        .bot-content th, .bot-content td {
+            border: 1px solid #ddd;
+            padding: 8px;
+        }
+        
+        .bot-content th {
+            background-color: #f5f5f5;
+            font-weight: bold;
+        }
+        
+        .bot-content pre {
+            background-color: #f5f5f5;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+            margin: 10px 0;
+        }
+        
+        .bot-content code {
+            font-family: monospace;
+            background-color: #f5f5f5;
+            padding: 2px 4px;
+            border-radius: 3px;
+        }
+        
+        /* Thinking steps */
+        .thinking-steps {
+            color: #666;
+            font-style: italic;
+            margin-top: 5px;
+            padding: 10px;
+            background-color: #f9f9f9;
+            border-left: 3px solid var(--primary-color);
+            margin-bottom: 10px;
+            animation: fadeIn 0.5s ease-in;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        
+        .thinking-step {
+            margin-bottom: 5px;
+            display: flex;
+            align-items: center;
+        }
+        
+        .thinking-step.active {
+            color: var(--primary-color);
+            font-weight: bold;
+        }
+        
+        .thinking-step-icon {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            margin-right: 8px;
+            border-radius: 50%;
+            background-color: #f0f0f0;
+        }
+        
+        .thinking-step.active .thinking-step-icon {
+            background-color: var(--primary-color);
+            animation: pulse 1.5s infinite;
+        }
+        
+        /* Upload confirmation styling */
+        .upload-confirmation {
+            background-color: #f9f9ff;
+            border-radius: 8px;
+            padding: 15px;
+            border-left: 4px solid var(--primary-color);
+        }
+        
+        .upload-confirmation h3 {
+            color: var(--primary-color);
+            margin-bottom: 10px;
+        }
+        
+        .upload-tip {
+            font-style: italic;
+            color: #666;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="logo">
+            <img src="https://www.brac.net/templates/saga/home-template/img/logo.png" alt="BRAC Logo">
+            <span class="logo-text">BRACGTP</span>
+        </div>
+        <button class="document-list-button" id="open-doc-modal">Documents</button>
+    </header>
+    
+    <main>
+        <div class="chat-container" id="chat-container">
+            <!-- Messages will be added here by JavaScript -->
+            <div class="message bot-message">
+                <div class="avatar bot-avatar">B</div>
+                <div class="message-content">
+                    <p>Hello! I'm BRACGPT, your procurement assistant at BRAC. I can help with RFPs, contracts, specifications, vendor quotes, and other procurement matters. How can I assist you today?</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="input-area">
+            <div class="input-container">
+                <textarea id="input" placeholder="Message BanglaChatbot..." rows="1"></textarea>
+                <div class="input-buttons">
+                    <button id="upload-btn" title="Upload document">📎</button>
+                    <button id="send" disabled>Send</button>
+                </div>
+                <input type="file" id="file-upload" accept=".pdf" hidden>
+            </div>
+        </div>
+    </main>
+    
+    <!-- Document list modal -->
+    <div class="modal" id="document-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Procurement Documents</h2>
+                <span class="close" id="close-modal">&times;</span>
+            </div>
+            
+            <p>These documents are available for the chatbot to analyze:</p>
+            <ul class="document-list" id="document-list">
+                <li>Loading documents...</li>
+            </ul>
+            
+            <div class="upload-form">
+                <h3>Upload New Document</h3>
+                <input type="file" id="modal-file-upload" accept=".pdf">
+                <button class="upload-btn" id="modal-upload-btn">Upload</button>
+                <div class="upload-status" id="upload-status"></div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // DOM Elements
+        const input = document.getElementById('input');
+        const sendButton = document.getElementById('send');
+        const uploadBtn = document.getElementById('upload-btn');
+        const fileUpload = document.getElementById('file-upload');
+        const chatContainer = document.getElementById('chat-container');
+        const openDocModal = document.getElementById('open-doc-modal');
+        const closeModal = document.getElementById('close-modal');
+        const documentModal = document.getElementById('document-modal');
+        const documentList = document.getElementById('document-list');
+        const modalFileUpload = document.getElementById('modal-file-upload');
+        const modalUploadBtn = document.getElementById('modal-upload-btn');
+        const uploadStatus = document.getElementById('upload-status');
+        
+        let chat_history = [];
+        
+        // Auto-resize textarea
+        input.addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = (this.scrollHeight) + 'px';
+            sendButton.disabled = !this.value.trim();
+        });
+        
+        // Enable/disable send button based on input
+        input.addEventListener('keyup', function() {
+            sendButton.disabled = !this.value.trim();
+        });
+        
+        // Handle Enter key press
+        input.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                if (!sendButton.disabled) {
+                    sendMessage();
+                }
+            }
+        });
+        
+        // Send message function
+        async function sendMessage() {
+            const question = input.value.trim();
+            if (!question) return;
+            
+            // Add user message to chat
+            addMessage(question, 'user');
+            
+            // Clear and reset input
+            input.value = '';
+            input.style.height = '56px';
+            sendButton.disabled = true;
+            
+            // Show thinking state with steps
+            const botMessageId = 'bot-message-' + Date.now();
+            addThinkingMessage(botMessageId);
+            
+            // Actually send the request
+            try {
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ question, chat_history })
+                });
+                
+                let botMsg = '';
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder('utf-8');
+                
+                // Read stream and update thinking message
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    const chunk = decoder.decode(value, { stream: true });
+                    botMsg += chunk;
+                    
+                    // Update the thinking message content
+                    updateThinkingMessage(botMessageId, botMsg);
+                }
+                
+                // Finalize the bot message (no more thinking)
+                finalizeMessage(botMessageId, botMsg);
+                
+                // Update chat history
+                chat_history.push([question, botMsg]);
+                
+            } catch (error) {
+                console.error('Error:', error);
+                document.getElementById(botMessageId).querySelector('.thinking').remove();
+                document.getElementById(botMessageId).querySelector('.message-content').innerHTML += 
+                    '<p>Sorry, I encountered an error while processing your request.</p>';
+            }
+        }
+        
+        // Add message to chat
+        function addMessage(text, sender) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message ' + (sender === 'user' ? 'user-message' : 'bot-message');
+            
+            const messageId = sender + '-message-' + Date.now();
+            messageDiv.id = messageId;
+            
+            const avatarDiv = document.createElement('div');
+            avatarDiv.className = 'avatar ' + (sender === 'user' ? 'user-avatar' : 'bot-avatar');
+            avatarDiv.textContent = sender === 'user' ? 'Y' : 'B';
+            
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            
+            if (sender === 'user') {
+                contentDiv.textContent = text;
+            } else {
+                contentDiv.innerHTML = text;
+            }
+            
+            messageDiv.appendChild(avatarDiv);
+            messageDiv.appendChild(contentDiv);
+            chatContainer.appendChild(messageDiv);
+            
+            // Scroll to bottom
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+            
+            return messageId;
+        }
+        
+        // Add thinking message with animation
+        function addThinkingMessage(messageId) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message bot-message';
+            messageDiv.id = messageId;
+            
+            const avatarDiv = document.createElement('div');
+            avatarDiv.className = 'avatar bot-avatar';
+            avatarDiv.textContent = 'B';
+            
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            
+            // Thinking steps (visible during processing)
+            const thinkingSteps = document.createElement('div');
+            thinkingSteps.className = 'thinking-steps';
+            thinkingSteps.innerHTML = '<p><strong>Thinking:</strong></p>';
+            
+            const stepsList = document.createElement('div');
+            stepsList.className = 'thinking-steps-list';
+            
+            const steps = [
+                'Retrieving relevant procurement documents...',
+                'Analyzing context from document sections...',
+                'Formulating procurement-specific response...'
+            ];
+            
+            steps.forEach((step, index) => {
+                const stepDiv = document.createElement('div');
+                stepDiv.className = index === 0 ? 'thinking-step active' : 'thinking-step';
+                stepDiv.innerHTML = `<span class="thinking-step-icon"></span>${step}`;
+                stepDiv.id = `${messageId}-step-${index}`;
+                stepsList.appendChild(stepDiv);
+            });
+            
+            thinkingSteps.appendChild(stepsList);
+            
+            // Animated dots for thinking
+            const thinkingDiv = document.createElement('div');
+            thinkingDiv.className = 'thinking';
+            thinkingDiv.innerHTML = 'Generating response<div class="dot"></div><div class="dot"></div><div class="dot"></div>';
+            
+            contentDiv.appendChild(thinkingSteps);
+            contentDiv.appendChild(thinkingDiv);
+            messageDiv.appendChild(avatarDiv);
+            messageDiv.appendChild(contentDiv);
+            chatContainer.appendChild(messageDiv);
+            
+            // Scroll to bottom
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+            
+            // Simulate progress through thinking steps
+            setTimeout(() => {
+                document.getElementById(`${messageId}-step-0`).classList.remove('active');
+                document.getElementById(`${messageId}-step-1`).classList.add('active');
+                
+                setTimeout(() => {
+                    document.getElementById(`${messageId}-step-1`).classList.remove('active');
+                    document.getElementById(`${messageId}-step-2`).classList.add('active');
+                }, 1200);
+            }, 1000);
+        }
+        
+        // Update thinking message with incoming content
+        function updateThinkingMessage(messageId, content) {
+            const messageDiv = document.getElementById(messageId);
+            if (!messageDiv) return;
+            
+            // Create a separate div for the actual content (separate from thinking animation)
+            let botContent = messageDiv.querySelector('.bot-content');
+            if (!botContent) {
+                botContent = document.createElement('div');
+                botContent.className = 'bot-content';
+                botContent.style.opacity = '0';
+                botContent.style.transition = 'opacity 0.5s ease';
+                messageDiv.querySelector('.message-content').appendChild(botContent);
+                
+                // Give a small delay before showing content to ensure thinking steps are visible
+                setTimeout(() => {
+                    botContent.style.opacity = '1';
+                }, 300);
+            }
+            
+            // Remove any triple backticks and language markers that might be in the response
+            let cleanedContent = content;
+            
+            // Remove markdown-style code block indicators
+            cleanedContent = cleanedContent.replace(/```html/g, '');
+            cleanedContent = cleanedContent.replace(/```/g, '');
+            
+            botContent.innerHTML = cleanedContent;
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+        
+        // Finalize message (remove thinking indicators)
+        function finalizeMessage(messageId, content) {
+            const messageDiv = document.getElementById(messageId);
+            if (!messageDiv) return;
+            
+            // Remove thinking indicators
+            const thinkingSteps = messageDiv.querySelector('.thinking-steps');
+            if (thinkingSteps) thinkingSteps.remove();
+            
+            const thinking = messageDiv.querySelector('.thinking');
+            if (thinking) thinking.remove();
+            
+            // Ensure content is displayed
+            let botContent = messageDiv.querySelector('.bot-content');
+            if (!botContent) {
+                botContent = document.createElement('div');
+                botContent.className = 'bot-content';
+                messageDiv.querySelector('.message-content').appendChild(botContent);
+            }
+            
+            // Remove any triple backticks and language markers that might be in the response
+            let cleanedContent = content;
+            
+            // Remove markdown-style code block indicators
+            cleanedContent = cleanedContent.replace(/```html/g, '');
+            cleanedContent = cleanedContent.replace(/```/g, '');
+            
+            botContent.innerHTML = cleanedContent;
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+        
+        // Load documents
+        async function loadDocuments() {
+            try {
+                const response = await fetch('/documents');
+                const data = await response.json();
+                
+                if (data.documents.length === 0) {
+                    documentList.innerHTML = '<li>No documents available. Upload some to get started.</li>';
+                } else {
+                    documentList.innerHTML = data.documents.map(doc => 
+                        `<li>
+                            <span>${doc}</span>
+                            <span>Uploaded document</span>
+                        </li>`
+                    ).join('');
+                }
+            } catch (error) {
+                console.error('Error loading documents:', error);
+                documentList.innerHTML = '<li>Error loading documents.</li>';
+            }
+        }
+        
+        // Document upload handling
+        async function uploadDocument(file) {
+            if (!file) {
+                uploadStatus.textContent = 'Please select a PDF file to upload.';
+                uploadStatus.className = 'upload-status error';
+                return;
+            }
+            
+            uploadStatus.textContent = 'Uploading and processing document...';
+            uploadStatus.className = 'upload-status loading';
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    uploadStatus.textContent = result.message;
+                    uploadStatus.className = 'upload-status success';
+                    
+                    // Add a bot message confirming the upload
+                    let botConfirmation = `<div class="upload-confirmation">
+                        <h3>📄 Document Uploaded</h3>
+                        <p>I've successfully processed <strong>${file.name}</strong> into ${result.chunks} searchable chunks.</p>
+                        <p>You can now ask questions about this document, and I'll automatically include relevant information from it in my responses.</p>
+                        <p class="upload-tip">Tip: Try asking something like "What are the key points in the document I just uploaded?"</p>
+                    </div>`;
+                    
+                    const messageId = addMessage(botConfirmation, 'bot');
+                    
+                    // Fetch updated document list
+                    loadDocuments();
+                    
+                    // Reset file inputs
+                    fileUpload.value = '';
+                    if (modalFileUpload) modalFileUpload.value = '';
+                    
+                    // Automatically ask a summarization question if this is the first upload
+                    if (chat_history.length === 0) {
+                        setTimeout(() => {
+                            input.value = "Please summarize the key points in the document I just uploaded.";
+                            sendButton.disabled = false;
+                            sendMessage();
+                        }, 1500);
+                    }
+                } else {
+                    uploadStatus.textContent = result.message || 'Upload failed. Please try again.';
+                    uploadStatus.className = 'upload-status error';
+                }
+            } catch (error) {
+                console.error('Error uploading document:', error);
+                uploadStatus.textContent = 'Error uploading document. Please try again.';
+                uploadStatus.className = 'upload-status error';
+            }
+        }
+        
+        // Event listeners
+        sendButton.addEventListener('click', sendMessage);
+        
+        uploadBtn.addEventListener('click', function() {
+            fileUpload.click();
+        });
+        
+        fileUpload.addEventListener('change', function() {
+            if (this.files.length > 0) {
+                uploadDocument(this.files[0]);
+            }
+        });
+        
+        modalUploadBtn.addEventListener('click', function() {
+            uploadDocument(modalFileUpload.files[0]);
+        });
+        
+        openDocModal.addEventListener('click', function() {
+            documentModal.style.display = 'flex';
+            loadDocuments();
+        });
+        
+        closeModal.addEventListener('click', function() {
+            documentModal.style.display = 'none';
+        });
+        
+        window.addEventListener('click', function(event) {
+            if (event.target === documentModal) {
+                documentModal.style.display = 'none';
+            }
+        });
+        
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            loadDocuments();
+            input.focus();
+        });
+    </script>
+</body>
+</html>
