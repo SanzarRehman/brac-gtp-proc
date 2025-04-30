@@ -124,13 +124,13 @@ def chat_endpoint(request: ChatRequest):
         original_hits = qdrant_client.search(
             collection_name=ORIGINAL_COLLECTION_NAME,
             query_vector=question_vec,
-            limit=3,
+            limit=5,
         )
         
         upload_hits = qdrant_client.search(
             collection_name=UPLOADS_COLLECTION_NAME,
             query_vector=question_vec,
-            limit=3,
+            limit=5,
         )
         
         # Format document context with source indications
@@ -339,36 +339,54 @@ async def list_documents():
     return {"documents": files}
 
 # Add endpoint to clear all vectors from the collection
-@app.post("/clear-vectors")
-async def clear_vectors():
+@app.post("/clear-all")
+async def clear_all_data():
     try:
-        # Delete and recreate the collection
-        try:
-            qdrant_client.delete_collection(collection_name=ORIGINAL_COLLECTION_NAME)
-        except Exception as e:
-            print(f"Original collection delete skipped or failed: {e}")
-            
-        try:
-            qdrant_client.create_collection(
-                collection_name=ORIGINAL_COLLECTION_NAME,
-                vectors_config=VectorParams(size=384, distance=Distance.COSINE),
-            )
-        except Exception as e:
-            print(f"Original collection creation skipped or failed: {e}")
+        # Delete and recreate both collections
+        for collection_name in [ORIGINAL_COLLECTION_NAME, UPLOADS_COLLECTION_NAME]:
+            try:
+                # Delete if exists
+                if qdrant_client.collection_exists(collection_name):
+                    qdrant_client.delete_collection(collection_name=collection_name)
+                
+                # Recreate the collection
+                qdrant_client.create_collection(
+                    collection_name=collection_name,
+                    vectors_config=VectorParams(size=384, distance=Distance.COSINE),
+                )
+            except Exception as e:
+                print(f"Collection {collection_name} operation failed: {e}")
         
-        # Reset the chat context as well
+        # Reset the chat context
         global chat_context
         chat_context = ChatContext()
         
+        # Re-initialize original documents if needed
+        if pdf_files:
+            # Reinsert original documents into their collection
+            payloads = [{"text": chunk.page_content, "source": "original"} for chunk in chunks]
+            if payloads:
+                qdrant_client.upsert(
+                    collection_name=ORIGINAL_COLLECTION_NAME,
+                    points=[
+                        {
+                            "id": i,
+                            "vector": embeddings[i],
+                            "payload": payloads[i],
+                        }
+                        for i in range(len(embeddings))
+                    ],
+                )
+        
         return JSONResponse(content={
             "status": "success",
-            "message": "Successfully cleared all vectors and chat context."
+            "message": "Successfully cleared all vector databases and chat context."
         })
     except Exception as e:
         return JSONResponse(
             status_code=500,
             content={
                 "status": "error",
-                "message": f"Failed to clear vectors: {str(e)}"
+                "message": f"Failed to clear data: {str(e)}"
             }
         )

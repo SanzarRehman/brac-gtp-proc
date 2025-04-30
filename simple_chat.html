@@ -4,6 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <title>BRACGPT - Procurement Assistant</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <style>
         * {
             box-sizing: border-box;
@@ -368,6 +369,49 @@
             border-radius: 3px;
         }
         
+        /* Enhanced Markdown styling */
+        .bot-content blockquote {
+            border-left: 3px solid var(--primary-color);
+            padding-left: 10px;
+            margin: 10px 0;
+            color: #555;
+            font-style: italic;
+        }
+        
+        .bot-content hr {
+            border: none;
+            border-top: 1px solid #ddd;
+            margin: 15px 0;
+        }
+        
+        .bot-content img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        
+        .bot-content a {
+            color: var(--primary-color);
+            text-decoration: none;
+        }
+        
+        .bot-content a:hover {
+            text-decoration: underline;
+        }
+        
+        .bot-content h1 {
+            font-size: 1.8em;
+        }
+        
+        .bot-content h2 {
+            font-size: 1.5em;
+        }
+        
+        .bot-content h3 {
+            font-size: 1.3em;
+        }
+        
         /* Thinking steps */
         .thinking-steps {
             color: #666;
@@ -428,6 +472,26 @@
             color: #666;
             margin-top: 10px;
         }
+        
+        .clear-data-section {
+            margin-top: 20px;
+            border-top: 1px solid #eee;
+            padding-top: 20px;
+        }
+        
+        .clear-btn {
+            background-color: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 8px 16px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        
+        .clear-btn:hover {
+            background-color: #c82333;
+        }
     </style>
 </head>
 <body>
@@ -481,6 +545,12 @@
                 <button class="upload-btn" id="modal-upload-btn">Upload</button>
                 <div class="upload-status" id="upload-status"></div>
             </div>
+            
+            <div class="clear-data-section">
+                <h3>Reset System</h3>
+                <p>Clear all uploaded documents and chat history:</p>
+                <button class="clear-btn" id="clear-all-btn">Clear All Data</button>
+            </div>
         </div>
     </div>
     
@@ -500,6 +570,24 @@
         const uploadStatus = document.getElementById('upload-status');
         
         let chat_history = [];
+        
+        // Function to format Markdown to HTML using marked.js library
+        function formatMarkdown(text) {
+            // Set marked.js options to sanitize HTML and enable GFM (GitHub Flavored Markdown)
+            marked.setOptions({
+                sanitize: false,  // Allow HTML but we'll handle sanitization
+                gfm: true,       // GitHub Flavored Markdown
+                breaks: true,    // Convert line breaks to <br>
+                headerIds: false, // Don't add IDs to headers
+                mangle: false,   // Don't mangle email addresses
+                smartLists: true, // Use smart list formatting
+                smartypants: true, // Smart punctuation (quotes, dashes, etc.)
+                xhtml: false      // Don't close empty tags with XHTML style
+            });
+            
+            // Process the Markdown text through marked
+            return marked.parse(text);
+        }
         
         // Auto-resize textarea
         input.addEventListener('input', function() {
@@ -596,7 +684,7 @@
             if (sender === 'user') {
                 contentDiv.textContent = text;
             } else {
-                contentDiv.innerHTML = text;
+                contentDiv.innerHTML = formatMarkdown(text);
             }
             
             messageDiv.appendChild(avatarDiv);
@@ -692,14 +780,8 @@
                 }, 300);
             }
             
-            // Remove any triple backticks and language markers that might be in the response
-            let cleanedContent = content;
-            
-            // Remove markdown-style code block indicators
-            cleanedContent = cleanedContent.replace(/```html/g, '');
-            cleanedContent = cleanedContent.replace(/```/g, '');
-            
-            botContent.innerHTML = cleanedContent;
+            // Apply Markdown formatting to the content
+            botContent.innerHTML = formatMarkdown(content);
             chatContainer.scrollTop = chatContainer.scrollHeight;
         }
         
@@ -723,14 +805,16 @@
                 messageDiv.querySelector('.message-content').appendChild(botContent);
             }
             
-            // Remove any triple backticks and language markers that might be in the response
+            // Clean the response content
+            // Remove markdown-style code block indicators that might interfere with rendering
             let cleanedContent = content;
-            
-            // Remove markdown-style code block indicators
             cleanedContent = cleanedContent.replace(/```html/g, '');
             cleanedContent = cleanedContent.replace(/```/g, '');
             
-            botContent.innerHTML = cleanedContent;
+            // Apply Markdown formatting to the content and set innerHTML
+            botContent.innerHTML = formatMarkdown(cleanedContent);
+            
+            // Scroll to bottom of chat
             chatContainer.scrollTop = chatContainer.scrollHeight;
         }
         
@@ -847,6 +931,48 @@
         window.addEventListener('click', function(event) {
             if (event.target === documentModal) {
                 documentModal.style.display = 'none';
+            }
+        });
+        
+        // Event listeners for Clear All Data button
+        document.getElementById('clear-all-btn').addEventListener('click', async function() {
+            if (confirm('Are you sure you want to clear all documents and chat history? This action cannot be undone.')) {
+                try {
+                    const response = await fetch('/clear-all', {
+                        method: 'POST'
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (response.ok) {
+                        // Clear the chat container except for the welcome message
+                        while (chatContainer.children.length > 1) {
+                            chatContainer.removeChild(chatContainer.lastChild);
+                        }
+                        
+                        // Reset chat history
+                        chat_history = [];
+                        
+                        // Update document list
+                        loadDocuments();
+                        
+                        // Show confirmation
+                        uploadStatus.textContent = result.message;
+                        uploadStatus.className = 'upload-status success';
+                        
+                        // Close modal after a short delay
+                        setTimeout(() => {
+                            documentModal.style.display = 'none';
+                        }, 1500);
+                    } else {
+                        uploadStatus.textContent = result.message || 'Failed to clear data. Please try again.';
+                        uploadStatus.className = 'upload-status error';
+                    }
+                } catch (error) {
+                    console.error('Error clearing data:', error);
+                    uploadStatus.textContent = 'Error clearing data. Please try again.';
+                    uploadStatus.className = 'upload-status error';
+                }
             }
         });
         
