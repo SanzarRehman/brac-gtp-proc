@@ -8,3 +8,9 @@ qdrant-client
 PyPDF2
 pydantic
 sentence_transformers
+transformers
+openai
+ollama
+requests
+pandas
+openpyxl

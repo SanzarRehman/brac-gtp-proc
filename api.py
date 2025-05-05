@@ -21,6 +21,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.http.models import VectorParams, Distance
 import os
 from datetime import datetime
+import pandas as pd  # Add this import for Excel processing
 
 app = FastAPI()
 
@@ -39,6 +40,7 @@ if not os.path.exists(UPLOADS_PATH):
 # Define separate collection names
 ORIGINAL_COLLECTION_NAME = "bangla_chatbot_docs"
 UPLOADS_COLLECTION_NAME = "bangla_chatbot_uploads"
+FRAMEWORK_AGREEMENTS_COLLECTION = "framework_agreements"
 
 # Setup for original documents
 pdf_files = [os.path.join(DOCS_PATH, f) for f in os.listdir(DOCS_PATH) if f.endswith('.pdf')]
@@ -78,6 +80,16 @@ try:
         )
 except Exception as e:
     print(f"Uploads collection creation skipped or failed: {e}")
+
+# Initialize framework agreements collection if it doesn't exist
+try:
+    if not qdrant_client.collection_exists(FRAMEWORK_AGREEMENTS_COLLECTION):
+        qdrant_client.create_collection(
+            collection_name=FRAMEWORK_AGREEMENTS_COLLECTION,
+            vectors_config=VectorParams(size=384, distance=Distance.COSINE),
+        )
+except Exception as e:
+    print(f"Framework agreements collection creation skipped or failed: {e}")
 
 # Insert original documents into their collection
 payloads = [{"text": chunk.page_content, "source": "original"} for chunk in chunks]
@@ -130,7 +142,7 @@ def chat_endpoint(request: ChatRequest):
         upload_hits = qdrant_client.search(
             collection_name=UPLOADS_COLLECTION_NAME,
             query_vector=question_vec,
-            limit=5,
+            limit=10,
         )
         
         # Format document context with source indications
@@ -268,19 +280,53 @@ chat_context = ChatContext()
 # Modify the upload endpoint to store file context
 @app.post("/upload")
 async def upload_document(file: UploadFile = File(...)):
-    # Save uploaded file to the uploads folder
     file_path = os.path.join(UPLOADS_PATH, file.filename)
-    
     try:
-        # Create the destination folder if it doesn't exist
         if not os.path.exists(UPLOADS_PATH):
             os.makedirs(UPLOADS_PATH)
-            
-        # Write the file
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-            
-        # Process and embed the new document
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        if file_ext in [".xlsx", ".xls", ".csv"]:
+            # --- Excel/Framework Agreement Processing ---
+            if file_ext == ".csv":
+                df = pd.read_csv(file_path)
+            else:
+                df = pd.read_excel(file_path)
+            # Create a summary (first 3 rows as string)
+            summary = df.head(3).to_string(index=False)
+            file_id = f"framework_{hash(file.filename)}_{len(chat_context.file_contexts)}"
+            chat_context.add_file_context(file_id, {
+                "filename": file.filename,
+                "summary": summary,
+                "upload_time": str(datetime.now())
+            })
+            # Embed each row as a string
+            rows = df.astype(str).fillna("").values.tolist()
+            row_texts = [" | ".join(row) for row in rows]
+            row_embeddings = [model.encode(text) for text in row_texts]
+            row_payloads = [{"row": text, "source": file.filename} for text in row_texts]
+            start_id = qdrant_client.count(collection_name=FRAMEWORK_AGREEMENTS_COLLECTION).count
+            qdrant_client.upsert(
+                collection_name=FRAMEWORK_AGREEMENTS_COLLECTION,
+                points=[
+                    {
+                        "id": start_id + i,
+                        "vector": row_embeddings[i],
+                        "payload": row_payloads[i],
+                    }
+                    for i in range(len(row_embeddings))
+                ],
+            )
+            return JSONResponse(content={
+                "filename": file.filename,
+                "status": "success",
+                "rows": len(row_texts),
+                "message": f"Framework agreement Excel successfully uploaded and processed with {len(row_texts)} rows."
+            })
+        # --- End of Excel/Framework Agreement Processing ---
+
+        # --- PDF Processing ---
         new_loader = PyPDFLoader(file_path)
         new_documents = new_loader.load()
         new_chunks = splitter.split_documents(new_documents)
@@ -339,54 +385,68 @@ async def list_documents():
     return {"documents": files}
 
 # Add endpoint to clear all vectors from the collection
-@app.post("/clear-all")
-async def clear_all_data():
+@app.post("/clear-vectors")
+async def clear_vectors():
     try:
-        # Delete and recreate both collections
-        for collection_name in [ORIGINAL_COLLECTION_NAME, UPLOADS_COLLECTION_NAME]:
-            try:
-                # Delete if exists
-                if qdrant_client.collection_exists(collection_name):
-                    qdrant_client.delete_collection(collection_name=collection_name)
-                
-                # Recreate the collection
-                qdrant_client.create_collection(
-                    collection_name=collection_name,
-                    vectors_config=VectorParams(size=384, distance=Distance.COSINE),
-                )
-            except Exception as e:
-                print(f"Collection {collection_name} operation failed: {e}")
+        # Delete and recreate the collection
+        try:
+            qdrant_client.delete_collection(collection_name=ORIGINAL_COLLECTION_NAME)
+        except Exception as e:
+            print(f"Original collection delete skipped or failed: {e}")
+            
+        try:
+            qdrant_client.create_collection(
+                collection_name=ORIGINAL_COLLECTION_NAME,
+                vectors_config=VectorParams(size=384, distance=Distance.COSINE),
+            )
+        except Exception as e:
+            print(f"Original collection creation skipped or failed: {e}")
         
-        # Reset the chat context
+        # Reset the chat context as well
         global chat_context
         chat_context = ChatContext()
         
-        # Re-initialize original documents if needed
-        if pdf_files:
-            # Reinsert original documents into their collection
-            payloads = [{"text": chunk.page_content, "source": "original"} for chunk in chunks]
-            if payloads:
-                qdrant_client.upsert(
-                    collection_name=ORIGINAL_COLLECTION_NAME,
-                    points=[
-                        {
-                            "id": i,
-                            "vector": embeddings[i],
-                            "payload": payloads[i],
-                        }
-                        for i in range(len(embeddings))
-                    ],
-                )
-        
         return JSONResponse(content={
             "status": "success",
-            "message": "Successfully cleared all vector databases and chat context."
+            "message": "Successfully cleared all vectors and chat context."
         })
     except Exception as e:
         return JSONResponse(
             status_code=500,
             content={
                 "status": "error",
-                "message": f"Failed to clear data: {str(e)}"
+                "message": f"Failed to clear vectors: {str(e)}"
+            }
+        )
+
+@app.post("/clear-all")
+async def clear_all():
+    try:
+        # Delete all collections
+        for collection in [ORIGINAL_COLLECTION_NAME, UPLOADS_COLLECTION_NAME, FRAMEWORK_AGREEMENTS_COLLECTION]:
+            try:
+                qdrant_client.delete_collection(collection_name=collection)
+            except Exception as e:
+                print(f"Collection {collection} delete skipped or failed: {e}")
+            try:
+                qdrant_client.create_collection(
+                    collection_name=collection,
+                    vectors_config=VectorParams(size=384, distance=Distance.COSINE),
+                )
+            except Exception as e:
+                print(f"Collection {collection} creation skipped or failed: {e}")
+        # Reset chat context
+        global chat_context
+        chat_context = ChatContext()
+        return JSONResponse(content={
+            "status": "success",
+            "message": "Successfully cleared all vectors and chat context."
+        })
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "message": f"Failed to clear all vectors: {str(e)}"
             }
         )

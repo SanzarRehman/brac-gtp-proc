@@ -516,12 +516,12 @@
         
         <div class="input-area">
             <div class="input-container">
-                <textarea id="input" placeholder="Message BanglaChatbot..." rows="1"></textarea>
+                <textarea id="input" placeholder="Message BRACGPT..." rows="1"></textarea>
                 <div class="input-buttons">
                     <button id="upload-btn" title="Upload document">📎</button>
                     <button id="send" disabled>Send</button>
                 </div>
-                <input type="file" id="file-upload" accept=".pdf" hidden>
+                <input type="file" id="file-upload" accept=".pdf,.xlsx,.xls,.csv" hidden>
             </div>
         </div>
     </main>
@@ -540,10 +540,11 @@
             </ul>
             
             <div class="upload-form">
-                <h3>Upload New Document</h3>
-                <input type="file" id="modal-file-upload" accept=".pdf">
+                <h3>Upload New Document or Framework Agreement</h3>
+                <input type="file" id="modal-file-upload" accept=".pdf,.xlsx,.xls,.csv">
                 <button class="upload-btn" id="modal-upload-btn">Upload</button>
                 <div class="upload-status" id="upload-status"></div>
+                <div class="upload-tip">Supported: PDF, Excel (.xlsx, .xls, .csv) for Framework Agreements</div>
             </div>
             
             <div class="clear-data-section">
@@ -661,7 +662,7 @@
             } catch (error) {
                 console.error('Error:', error);
                 document.getElementById(botMessageId).querySelector('.thinking').remove();
-                document.getElementById(botMessageId).querySelector('.message-content').innerHTML += 
+                document.get
                     '<p>Sorry, I encountered an error while processing your request.</p>';
             }
         }
@@ -843,60 +844,46 @@
         // Document upload handling
         async function uploadDocument(file) {
             if (!file) {
-                uploadStatus.textContent = 'Please select a PDF file to upload.';
+                uploadStatus.textContent = 'Please select a file to upload.';
                 uploadStatus.className = 'upload-status error';
                 return;
             }
-            
             uploadStatus.textContent = 'Uploading and processing document...';
             uploadStatus.className = 'upload-status loading';
-            
             const formData = new FormData();
             formData.append('file', file);
-            
             try {
                 const response = await fetch('/upload', {
                     method: 'POST',
                     body: formData
                 });
-                
                 const result = await response.json();
-                
                 if (response.ok) {
                     uploadStatus.textContent = result.message;
                     uploadStatus.className = 'upload-status success';
-                    
-                    // Add a bot message confirming the upload
-                    let botConfirmation = `<div class="upload-confirmation">
-                        <h3>📄 Document Uploaded</h3>
-                        <p>I've successfully processed <strong>${file.name}</strong> into ${result.chunks} searchable chunks.</p>
-                        <p>You can now ask questions about this document, and I'll automatically include relevant information from it in my responses.</p>
-                        <p class="upload-tip">Tip: Try asking something like "What are the key points in the document I just uploaded?"</p>
-                    </div>`;
-                    
-                    const messageId = addMessage(botConfirmation, 'bot');
-                    
-                    // Fetch updated document list
+                    let botConfirmation;
+                    if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls') || file.name.endsWith('.csv')) {
+                        botConfirmation = `<div class="upload-confirmation">
+                            <h3>📊 Framework Agreement Uploaded</h3>
+                            <p>I've successfully processed <strong>${file.name}</strong> as a Framework Agreement Excel. You can now ask about framework items, prices, suppliers, etc.</p>
+                            <p class="upload-tip">Try: "Show me the latest unit price for SPS Module in the framework agreement."</p>
+                        </div>`;
+                    } else {
+                        botConfirmation = `<div class="upload-confirmation">
+                            <h3>📄 Document Uploaded</h3>
+                            <p>I've successfully processed <strong>${file.name}</strong> into searchable chunks.</p>
+                            <p>You can now ask questions about this document.</p>
+                        </div>`;
+                    }
+                    addMessage(botConfirmation, 'bot');
                     loadDocuments();
-                    
-                    // Reset file inputs
                     fileUpload.value = '';
                     if (modalFileUpload) modalFileUpload.value = '';
-                    
-                    // Automatically ask a summarization question if this is the first upload
-                    if (chat_history.length === 0) {
-                        setTimeout(() => {
-                            input.value = "Please summarize the key points in the document I just uploaded.";
-                            sendButton.disabled = false;
-                            sendMessage();
-                        }, 1500);
-                    }
                 } else {
                     uploadStatus.textContent = result.message || 'Upload failed. Please try again.';
                     uploadStatus.className = 'upload-status error';
                 }
             } catch (error) {
-                console.error('Error uploading document:', error);
                 uploadStatus.textContent = 'Error uploading document. Please try again.';
                 uploadStatus.className = 'upload-status error';
             }
