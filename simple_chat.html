@@ -193,7 +193,7 @@
         }
         
         #input:focus {
-            border-color: var(--primary-color);
+            border-color: var (--primary-color);
             box-shadow: 0 0 0 2px rgba(236, 0, 140, 0.2);
         }
         
@@ -501,6 +501,12 @@
             <span class="logo-text">BRACGTP</span>
         </div>
         <button class="document-list-button" id="open-doc-modal">Documents</button>
+        <button class="document-list-button" id="open-rfp-modal">Generate RFP</button>
+        <button class="document-list-button" id="open-proposal-update-modal">Modify Proposal</button>
+        <select id="mode-selector" class="document-list-button" style="margin-left:12px;">
+            <option value="general">General Procurement Chat</option>
+            <option value="rfp">RFP Builder Chat</option>
+        </select>
     </header>
     
     <main>
@@ -555,6 +561,40 @@
         </div>
     </div>
     
+    <!-- RFP Modal -->
+    <div class="modal" id="rfp-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Generate RFP Document</h2>
+                <span class="close" id="close-rfp-modal">&times;</span>
+            </div>
+            <form id="rfp-form">
+                <label>Title:<br><input type="text" name="title" required style="width:100%"></label><br><br>
+                <label>Description:<br><textarea name="description" required style="width:100%" rows="3"></textarea></label><br><br>
+                <label>Deadline:<br><input type="date" name="deadline" required></label><br><br>
+                <label>Requirements:<br><textarea name="requirements" required style="width:100%" rows="3"></textarea></label><br><br>
+                <button type="submit" class="upload-btn">Generate RFP</button>
+            </form>
+            <div class="upload-status" id="rfp-status"></div>
+        </div>
+    </div>
+    
+    <!-- Proposal Update Modal -->
+    <div class="modal" id="proposal-update-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Update/Modify Proposal</h2>
+                <span class="close" id="close-proposal-update-modal">&times;</span>
+            </div>
+            <form id="proposal-update-form">
+                <label>Current Proposal:<br><textarea name="proposal_text" required style="width:100%" rows="8" placeholder="Paste the current proposal here..."></textarea></label><br><br>
+                <label>Update Instructions:<br><textarea name="update_instructions" required style="width:100%" rows="3" placeholder="Describe the changes you want..."></textarea></label><br><br>
+                <button type="submit" class="upload-btn">Update Proposal</button>
+            </form>
+            <div class="upload-status" id="proposal-update-status"></div>
+        </div>
+    </div>
+    
     <script>
         // DOM Elements
         const input = document.getElementById('input');
@@ -570,7 +610,33 @@
         const modalUploadBtn = document.getElementById('modal-upload-btn');
         const uploadStatus = document.getElementById('upload-status');
         
+        const openRfpModal = document.getElementById('open-rfp-modal');
+        const rfpModal = document.getElementById('rfp-modal');
+        const closeRfpModal = document.getElementById('close-rfp-modal');
+        const rfpForm = document.getElementById('rfp-form');
+        const rfpStatus = document.getElementById('rfp-status');
+        
+        const openProposalUpdateModal = document.getElementById('open-proposal-update-modal');
+        const proposalUpdateModal = document.getElementById('proposal-update-modal');
+        const closeProposalUpdateModal = document.getElementById('close-proposal-update-modal');
+        const proposalUpdateForm = document.getElementById('proposal-update-form');
+        const proposalUpdateStatus = document.getElementById('proposal-update-status');
+        
+        const modeSelector = document.getElementById('mode-selector');
+        let chatMode = modeSelector.value; // 'general' or 'rfp'
+        
+        modeSelector.addEventListener('change', function() {
+            chatMode = this.value;
+            // Optionally, show a message in chat when mode changes
+            if (chatMode === 'general') {
+                addMessage('Switched to General Procurement Chat mode. You can ask any procurement-related question.', 'bot');
+            } else {
+                addMessage('Switched to RFP Builder Chat mode. I will only help you build RFPs in this mode.', 'bot');
+            }
+        });
+        
         let chat_history = [];
+        let rfpMode = false; // Track RFP Service mode
         
         // Function to format Markdown to HTML using marked.js library
         function formatMarkdown(text) {
@@ -612,58 +678,57 @@
             }
         });
         
+        // Add RFP Service toggle button
+        const rfpToggleBtn = document.createElement('button');
+        rfpToggleBtn.id = 'rfp-toggle-btn';
+        rfpToggleBtn.className = 'document-list-button';
+        rfpToggleBtn.textContent = 'RFP Service: Off';
+        rfpToggleBtn.style.marginRight = '8px';
+        document.querySelector('.input-buttons').prepend(rfpToggleBtn);
+        
+        // Toggle RFP mode
+        rfpToggleBtn.addEventListener('click', function() {
+            rfpMode = !rfpMode;
+            rfpToggleBtn.textContent = rfpMode ? 'RFP Service: On' : 'RFP Service: Off';
+            rfpToggleBtn.style.backgroundColor = rfpMode ? 'var(--primary-dark)' : 'var(--primary-color)';
+        });
+        
         // Send message function
         async function sendMessage() {
             const question = input.value.trim();
             if (!question) return;
-            
-            // Add user message to chat
             addMessage(question, 'user');
-            
-            // Clear and reset input
             input.value = '';
             input.style.height = '56px';
             sendButton.disabled = true;
-            
-            // Show thinking state with steps
             const botMessageId = 'bot-message-' + Date.now();
             addThinkingMessage(botMessageId);
-            
-            // Actually send the request
             try {
-                const response = await fetch('/chat', {
+                const body = { question, chat_history, mode: chatMode };
+                if (rfpMode) body.rfp_service = true;
+                // Choose endpoint based on mode
+                const endpoint = (chatMode === 'rfp') ? '/rfp-chat' : '/chat';
+                const response = await fetch(endpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ question, chat_history })
+                    body: JSON.stringify(body)
                 });
-                
                 let botMsg = '';
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder('utf-8');
-                
-                // Read stream and update thinking message
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
-                    
                     const chunk = decoder.decode(value, { stream: true });
                     botMsg += chunk;
-                    
-                    // Update the thinking message content
                     updateThinkingMessage(botMessageId, botMsg);
                 }
-                
-                // Finalize the bot message (no more thinking)
                 finalizeMessage(botMessageId, botMsg);
-                
-                // Update chat history
                 chat_history.push([question, botMsg]);
-                
             } catch (error) {
                 console.error('Error:', error);
                 document.getElementById(botMessageId).querySelector('.thinking').remove();
-                document.get
-                    '<p>Sorry, I encountered an error while processing your request.</p>';
+                document.getElementById(botMessageId).querySelector('.message-content').innerHTML = '<p>Sorry, I encountered an error while processing your request.</p>';
             }
         }
         
@@ -790,14 +855,11 @@
         function finalizeMessage(messageId, content) {
             const messageDiv = document.getElementById(messageId);
             if (!messageDiv) return;
-            
             // Remove thinking indicators
             const thinkingSteps = messageDiv.querySelector('.thinking-steps');
             if (thinkingSteps) thinkingSteps.remove();
-            
             const thinking = messageDiv.querySelector('.thinking');
             if (thinking) thinking.remove();
-            
             // Ensure content is displayed
             let botContent = messageDiv.querySelector('.bot-content');
             if (!botContent) {
@@ -805,16 +867,16 @@
                 botContent.className = 'bot-content';
                 messageDiv.querySelector('.message-content').appendChild(botContent);
             }
-            
             // Clean the response content
-            // Remove markdown-style code block indicators that might interfere with rendering
             let cleanedContent = content;
             cleanedContent = cleanedContent.replace(/```html/g, '');
             cleanedContent = cleanedContent.replace(/```/g, '');
-            
+            // Enhance: Detect download links and replace with styled button
+            cleanedContent = cleanedContent.replace(/<a ([^>]*href=["'](\/static\/[\w\d_\-.]+\.(pdf|docx))["'][^>]*)>(.*?)<\/a>/gi, function(match, attrs, href, ext, text) {
+                return `<a ${attrs} class="download-btn" style="display:inline-block;margin:12px 0;padding:10px 18px;background:var(--primary-color);color:#fff;border-radius:5px;font-weight:bold;text-decoration:none;" download>${text.includes('Download') ? text : 'Download File'}</a>`;
+            });
             // Apply Markdown formatting to the content and set innerHTML
             botContent.innerHTML = formatMarkdown(cleanedContent);
-            
             // Scroll to bottom of chat
             chatContainer.scrollTop = chatContainer.scrollHeight;
         }
@@ -825,14 +887,16 @@
                 const response = await fetch('/documents');
                 const data = await response.json();
                 
+                let guidelineLink = '';
+                if (data.documents.includes('BPD_2025_FA-76.pdf')) {
+                    guidelineLink = `<li><a href="/doccuments/BPD_2025_FA-76.pdf" target="_blank" style="color:var(--primary-color);font-weight:bold;">Download RFP Guideline PDF</a></li>`;
+                }
+                
                 if (data.documents.length === 0) {
-                    documentList.innerHTML = '<li>No documents available. Upload some to get started.</li>';
+                    documentList.innerHTML = guidelineLink + '<li>No documents available. Upload some to get started.</li>';
                 } else {
-                    documentList.innerHTML = data.documents.map(doc => 
-                        `<li>
-                            <span>${doc}</span>
-                            <span>Uploaded document</span>
-                        </li>`
+                    documentList.innerHTML = guidelineLink + data.documents.map(doc => 
+                        `<li><span>${doc}</span><span>Uploaded document</span></li>`
                     ).join('');
                 }
             } catch (error) {
@@ -918,6 +982,116 @@
         window.addEventListener('click', function(event) {
             if (event.target === documentModal) {
                 documentModal.style.display = 'none';
+            }
+        });
+        
+        openRfpModal.addEventListener('click', function() {
+            rfpModal.style.display = 'flex';
+            rfpStatus.textContent = '';
+            rfpForm.reset();
+        });
+        
+        closeRfpModal.addEventListener('click', function() {
+            rfpModal.style.display = 'none';
+        });
+        
+        window.addEventListener('click', function(event) {
+            if (event.target === rfpModal) {
+                rfpModal.style.display = 'none';
+            }
+        });
+        
+        rfpForm.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            rfpStatus.textContent = 'Generating RFP...';
+            rfpStatus.className = 'upload-status loading';
+            const formData = new FormData(rfpForm);
+            const rfp_info = {};
+            for (const [k, v] of formData.entries()) rfp_info[k] = v;
+            // Add user message to chat
+            addMessage('Generate an RFP document', 'user');
+            // Show thinking state
+            const botMessageId = 'bot-message-' + Date.now();
+            addThinkingMessage(botMessageId);
+            try {
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        question: 'Generate an RFP document',
+                        chat_history,
+                        rfp_service: true,
+                        rfp_info
+                    })
+                });
+                let botMsg = '';
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder('utf-8');
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    const chunk = decoder.decode(value, { stream: true });
+                    botMsg += chunk;
+                    updateThinkingMessage(botMessageId, botMsg);
+                }
+                finalizeMessage(botMessageId, botMsg);
+                chat_history.push(['Generate an RFP document', botMsg]);
+                rfpStatus.textContent = 'RFP generated! See chat for download link.';
+                rfpStatus.className = 'upload-status success';
+                rfpModal.style.display = 'none';
+            } catch (error) {
+                rfpStatus.textContent = 'Error generating RFP.';
+                rfpStatus.className = 'upload-status error';
+            }
+        });
+        
+        openProposalUpdateModal.addEventListener('click', function() {
+            proposalUpdateModal.style.display = 'flex';
+            proposalUpdateStatus.textContent = '';
+            proposalUpdateForm.reset();
+        });
+        closeProposalUpdateModal.addEventListener('click', function() {
+            proposalUpdateModal.style.display = 'none';
+        });
+        window.addEventListener('click', function(event) {
+            if (event.target === proposalUpdateModal) {
+                proposalUpdateModal.style.display = 'none';
+            }
+        });
+        proposalUpdateForm.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            proposalUpdateStatus.textContent = 'Updating proposal...';
+            proposalUpdateStatus.className = 'upload-status loading';
+            const formData = new FormData(proposalUpdateForm);
+            const proposal_text = formData.get('proposal_text');
+            const update_instructions = formData.get('update_instructions');
+            addMessage('Update proposal: ' + update_instructions, 'user');
+            const botMessageId = 'bot-message-' + Date.now();
+            addThinkingMessage(botMessageId);
+            try {
+                const response = await fetch('/proposal-update', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ proposal_text, update_instructions, chat_history, mode: chatMode })
+                });
+                let botMsg = '';
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder('utf-8');
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    const chunk = decoder.decode(value, { stream: true });
+                    botMsg += chunk;
+                    updateThinkingMessage(botMessageId, botMsg);
+                }
+                finalizeMessage(botMessageId, botMsg);
+                chat_history.push(['Update proposal: ' + update_instructions, botMsg]);
+                proposalUpdateStatus.textContent = 'Proposal updated! See chat for details.';
+                proposalUpdateStatus.className = 'upload-status success';
+                proposalUpdateModal.style.display = 'none';
+            } catch (error) {
+                proposalUpdateStatus.textContent = 'Error updating proposal.';
+                proposalUpdateStatus.className = 'upload-status error';
             }
         });
         

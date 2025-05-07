@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, File, UploadFile, Form
+from fastapi import FastAPI, Request, File, UploadFile, Form, Body
 from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 import shutil
 from pathlib import Path
@@ -22,11 +22,22 @@ from qdrant_client.http.models import VectorParams, Distance
 import os
 from datetime import datetime
 import pandas as pd  # Add this import for Excel processing
+from docx import Document  # For RFP doc generation
+from fpdf import FPDF  # For PDF generation from proposal text
+import re
+from fastapi.openapi.utils import get_openapi
 
 app = FastAPI()
 
 class ChatRequest(BaseModel):
     question: str
+    chat_history: list = []
+    rfp_service: bool = False  # Add this field
+    rfp_info: dict = None      # Add this field for user RFP info
+
+class ProposalUpdateRequest(BaseModel):
+    proposal_text: str
+    update_instructions: str
     chat_history: list = []
 
 # Define paths for original and uploaded documents
@@ -122,7 +133,51 @@ openai_client = openai.OpenAI(
 
 @app.post("/chat")
 def chat_endpoint(request: ChatRequest):
+    def extract_proposal(text):
+        match = re.search(r'<RFP_PROPOSAL>(.*?)</RFP_PROPOSAL>', text, re.DOTALL)
+        return match.group(1).strip() if match else None
+
+    def generate_pdf_from_text(text, filename):
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_auto_page_break(auto=True, margin=15)
+        pdf.set_font("Arial", size=12)
+        for line in text.splitlines():
+            pdf.multi_cell(0, 10, line)
+        pdf.output(filename)
+
     def stream_response():
+        # If RFP generation is requested
+        if getattr(request, 'rfp_service', False):
+            # 1. Retrieve BRAC guideline context from vector store
+            guideline_query = "BRAC RFP guideline"
+            guideline_vec = model.encode(guideline_query)
+            guideline_hits = qdrant_client.search(
+                collection_name=ORIGINAL_COLLECTION_NAME,
+                query_vector=guideline_vec,
+                limit=3,
+            )
+            guideline_text = "\n".join([hit.payload['text'] for hit in guideline_hits])
+            # 2. Compose RFP document using user info and guideline
+            doc = Document()
+            doc.add_heading('Request for Proposal (RFP)', 0)
+            if request.rfp_info:
+                for k, v in request.rfp_info.items():
+                    doc.add_paragraph(f"{k}: {v}")
+            doc.add_heading('BRAC RFP Guidelines', level=1)
+            doc.add_paragraph(guideline_text)
+            # 3. Save RFP file
+            rfp_dir = os.path.join(os.path.dirname(__file__), 'static')
+            if not os.path.exists(rfp_dir):
+                os.makedirs(rfp_dir)
+            rfp_filename = f"rfp_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
+            rfp_path = os.path.join(rfp_dir, rfp_filename)
+            doc.save(rfp_path)
+            # 4. Yield a chat message with download link
+            download_url = f"/static/{rfp_filename}"
+            msg = f"<h2>RFP Generated</h2><p>Your RFP has been generated based on your input and BRAC guidelines.</p><a href=\"{download_url}\" target=\"_blank\"><strong>Download RFP Document</strong></a>"
+            yield msg.encode('utf-8')
+            return
         # Embed the question for similarity search
         question_vec = model.encode(request.question)
         
@@ -191,6 +246,7 @@ INSTRUCTIONS:
 8. If a user's question is similar to a previous question, acknowledge this and build upon previous responses.
 9. Never reveal that you're using any default documents or stored knowledge base.
 10. For uploaded documents, simply respond as if you've personally reviewed them as a procurement officer.
+11. If generating an RFP proposal, enclose the proposal text within <RFP_PROPOSAL>...</RFP_PROPOSAL> tags.
 
 Your goal is to provide helpful procurement guidance while maintaining a professional BRAC organizational identity."""},
             {"role": "user", "content": f"Context: {combined_context}\n\nQuestion: {request.question}"}
@@ -209,6 +265,7 @@ Your goal is to provide helpful procurement guidance while maintaining a profess
             "Authorization": f"Bearer {OPENAI_API_KEY}"
         }
         with requests.post(OPENAI_BASE_URL + "/chat/completions", headers=headers, json=data, stream=True) as resp:
+            full_response = ""
             for line in resp.iter_lines():
                 if line:
                     if line.startswith(b'data: '):
@@ -219,9 +276,91 @@ Your goal is to provide helpful procurement guidance while maintaining a profess
                         chunk = json.loads(line)
                         content = chunk.get('choices', [{}])[0].get('delta', {}).get('content', '')
                         if content:
+                            full_response += content
                             yield content.encode('utf-8')  # Yield bytes for StreamingResponse
                     except Exception:
                         continue
+            # After streaming, check for RFP proposal tag and generate PDF if present
+            proposal = extract_proposal(full_response)
+            if proposal:
+                pdf_dir = os.path.join(os.path.dirname(__file__), 'static')
+                if not os.path.exists(pdf_dir):
+                    os.makedirs(pdf_dir)
+                pdf_filename = f"rfp_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+                pdf_path = os.path.join(pdf_dir, pdf_filename)
+                generate_pdf_from_text(proposal, pdf_path)
+                download_url = f"/static/{pdf_filename}"
+                msg = f"<h2>RFP Proposal PDF</h2><p>Your RFP proposal has been generated as a PDF.</p><a href=\"{download_url}\" target=\"_blank\"><strong>Download RFP PDF</strong></a>"
+                yield msg.encode('utf-8')
+    return StreamingResponse(stream_response(), media_type="text/plain")
+
+@app.post("/proposal-update")
+def proposal_update_endpoint(request: ProposalUpdateRequest = Body(...)):
+    def generate_pdf_from_text(text, filename):
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_auto_page_break(auto=True, margin=15)
+        pdf.set_font("Arial", size=12)
+        for line in text.splitlines():
+            pdf.multi_cell(0, 10, line)
+        pdf.output(filename)
+
+    def stream_response():
+        # Compose context for the LLM
+        messages = [
+            {"role": "system", "content": '''You are a senior procurement proposal editor for BRAC. Your job is to update, revise, or modify procurement proposals based on user instructions. 
+
+INSTRUCTIONS:
+1. Carefully read the user's update instructions and the current proposal text.
+2. Make only the requested changes, keeping the rest of the proposal intact.
+3. Respond with the full, updated proposal, formatted in HTML for clarity.
+4. If the user requests a summary of changes, provide a bullet list before the updated proposal.
+5. If the user requests a PDF, enclose the proposal in <RFP_PROPOSAL>...</RFP_PROPOSAL> tags so a PDF can be generated.
+6. Be precise, professional, and concise.'''
+            },
+            {"role": "user", "content": f"Current Proposal:\n{request.proposal_text}\n\nUpdate Instructions:\n{request.update_instructions}"}
+        ]
+        data = {
+            "model": OPENAI_MODEL,
+            "messages": messages,
+            "max_tokens": 25600,
+            "temperature": 0.5,
+            "n": 1,
+            "stream": True
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {OPENAI_API_KEY}"
+        }
+        full_response = ""
+        with requests.post(OPENAI_BASE_URL + "/chat/completions", headers=headers, json=data, stream=True) as resp:
+            for line in resp.iter_lines():
+                if line:
+                    if line.startswith(b'data: '):
+                        line = line[6:]
+                    if line == b'[DONE]':
+                        break
+                    try:
+                        chunk = json.loads(line)
+                        content = chunk.get('choices', [{}])[0].get('delta', {}).get('content', '')
+                        if content:
+                            full_response += content
+                            yield content.encode('utf-8')
+                    except Exception:
+                        continue
+        # After streaming, check for RFP proposal tag and generate PDF if present
+        match = re.search(r'<RFP_PROPOSAL>(.*?)</RFP_PROPOSAL>', full_response, re.DOTALL)
+        if match:
+            proposal = match.group(1).strip()
+            pdf_dir = os.path.join(os.path.dirname(__file__), 'static')
+            if not os.path.exists(pdf_dir):
+                os.makedirs(pdf_dir)
+            pdf_filename = f"rfp_update_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+            pdf_path = os.path.join(pdf_dir, pdf_filename)
+            generate_pdf_from_text(proposal, pdf_path)
+            download_url = f"/static/{pdf_filename}"
+            msg = f"<h2>Updated Proposal PDF</h2><p>Your updated proposal has been generated as a PDF.</p><a href=\"{download_url}\" target=\"_blank\"><strong>Download Updated Proposal PDF</strong></a>"
+            yield msg.encode('utf-8')
     return StreamingResponse(stream_response(), media_type="text/plain")
 
 @app.get("/")
@@ -450,3 +589,109 @@ async def clear_all():
                 "message": f"Failed to clear all vectors: {str(e)}"
             }
         )
+
+from fastapi.staticfiles import StaticFiles
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+@app.post("/rfp-chat")
+def rfp_chat_endpoint(request: ChatRequest):
+    def extract_text_from_pdf(pdf_path):
+        try:
+            from PyPDF2 import PdfReader
+            reader = PdfReader(pdf_path)
+            text = "\n".join(page.extract_text() or '' for page in reader.pages)
+            return text
+        except Exception as e:
+            return f"[Error extracting PDF text: {e}]"
+
+    def get_guideline_context():
+        guideline_query = "BRAC RFP guideline"
+        guideline_vec = model.encode(guideline_query)
+        guideline_hits = qdrant_client.search(
+            collection_name=ORIGINAL_COLLECTION_NAME,
+            query_vector=guideline_vec,
+            limit=3,
+        )
+        return "\n".join([hit.payload['text'] for hit in guideline_hits])
+
+    def stream_response():
+        # Build chat history for LLM
+        messages = [
+            {"role": "system", "content": '''You are BRACGPT, an expert RFP (Request for Proposal) builder and verifier for BRAC. Your job is to help the user build, review, and verify RFP documents step by step.\n\nINSTRUCTIONS:\n1. Guide the user through the RFP creation process, one section at a time (e.g., Title, Background, Requirements, Evaluation Criteria, Submission Instructions, etc.).\n2. If the user uploads an RFP, analyze and verify it against BRAC's RFP guidelines.\n3. Always use the full chat history for context.\n4. After gathering all necessary details, generate a full RFP proposal in clear, structured English, using HTML formatting for sections and lists.\n5. Enclose the final RFP proposal in <RFP_PROPOSAL>...</RFP_PROPOSAL> tags.\n6. If verifying, provide a detailed report of compliance and suggestions.\n7. Do not answer general procurement questions or provide unrelated advice. Only focus on building and verifying the RFP.\n8. Be concise, professional, and use BRAC's organizational tone.\n9. If the user says they are done or ready, proceed to generate or verify the full RFP.\n10. Always provide the full proposal inside <RFP_PROPOSAL>...</RFP_PROPOSAL> tags when generating a proposal.'''}
+        ]
+        # Add chat history
+        for q, a in request.chat_history:
+            messages.append({"role": "user", "content": q})
+            messages.append({"role": "assistant", "content": a})
+        # Add current user question
+        messages.append({"role": "user", "content": request.question})
+
+        # If user wants to verify an uploaded RFP
+        if request.rfp_info and request.rfp_info.get("uploaded_rfp_path"):
+            rfp_path = request.rfp_info["uploaded_rfp_path"]
+            rfp_text = extract_text_from_pdf(rfp_path)
+            guideline_text = get_guideline_context()
+            messages.append({
+                "role": "user",
+                "content": f"Please verify the following RFP against BRAC's RFP guidelines.\n\nRFP Text:\n{rfp_text}\n\nGuidelines:\n{guideline_text}"
+            })
+
+        data = {
+            "model": OPENAI_MODEL,
+            "messages": messages,
+            "max_tokens": 25600,
+            "temperature": 0.4,
+            "n": 1,
+            "stream": True
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {OPENAI_API_KEY}"
+        }
+        full_response = ""
+        with requests.post(OPENAI_BASE_URL + "/chat/completions", headers=headers, json=data, stream=True) as resp:
+            for line in resp.iter_lines():
+                if line:
+                    if line.startswith(b'data: '):
+                        line = line[6:]
+                    if line == b'[DONE]':
+                        break
+                    try:
+                        chunk = json.loads(line)
+                        content = chunk.get('choices', [{}])[0].get('delta', {}).get('content', '')
+                        if content:
+                            full_response += content
+                            yield content.encode('utf-8')
+                    except Exception:
+                        continue
+        # After streaming, check for RFP proposal tag and generate PDF if present
+        if request.question.strip().lower() == "download":
+            # Find the most recent RFP PDF or Markdown file in the static directory
+            pdf_dir = os.path.join(os.path.dirname(__file__), 'static')
+            files = [f for f in os.listdir(pdf_dir) if (f.startswith('rfp_') and (f.endswith('.pdf') or f.endswith('.md')))]
+            if files:
+                latest_file = max(files, key=lambda f: os.path.getctime(os.path.join(pdf_dir, f)))
+                download_url = f"/static/{latest_file}"
+                if latest_file.endswith('.md'):
+                    msg = f"<h2>RFP Proposal (Markdown)</h2><p>Your RFP proposal is ready as a Markdown file.</p><a href=\"{download_url}\" target=\"_blank\"><strong>Download RFP Markdown</strong></a><br><br><iframe src=\"{download_url}\" width=\"100%\" height=\"600\" style=\"border:1px solid #ccc; background:#fafbfc;\"></iframe>"
+                else:
+                    msg = f"<h2>RFP Proposal PDF</h2><p>Your RFP proposal is ready.</p><a href=\"{download_url}\" target=\"_blank\"><strong>Download RFP PDF</strong></a>"
+                yield msg.encode('utf-8')
+                return
+        match = re.search(r'<RFP_PROPOSAL>(.*?)</RFP_PROPOSAL>', full_response, re.DOTALL)
+        if match:
+            proposal = match.group(1).strip()
+            pdf_dir = os.path.join(os.path.dirname(__file__), 'static')
+            if not os.path.exists(pdf_dir):
+                os.makedirs(pdf_dir)
+            pdf_filename = f"rfp_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+            pdf_path = os.path.join(pdf_dir, pdf_filename)
+            # Convert Markdown to HTML, then HTML to PDF
+            import markdown2
+            from weasyprint import HTML
+            html_content = markdown2.markdown(proposal)
+            HTML(string=html_content).write_pdf(pdf_path)
+            download_url = f"/static/{pdf_filename}"
+            msg = f"<h2>RFP Proposal PDF</h2><p>Your RFP proposal has been generated as a PDF.</p><a href=\"{download_url}\" target=\"_blank\"><strong>Download RFP PDF</strong></a>"
+            yield msg.encode('utf-8')
+    return StreamingResponse(stream_response(), media_type="text/plain")
